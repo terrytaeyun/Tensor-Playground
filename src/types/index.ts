@@ -67,4 +67,5 @@ export interface VisualAnimationState {
   outputIndices: number[];
   active: boolean;
   result: OperationResult | null;
+  durationMs: number;
 }

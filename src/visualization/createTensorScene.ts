@@ -35,9 +35,23 @@ interface SliceView {
   outline: THREE.LineSegments<THREE.EdgesGeometry, THREE.LineBasicMaterial>;
   label: CSS2DObject;
 }
+interface VectorView {
+  index: number;
+  mesh: THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>;
+  label: CSS2DObject;
+  basePosition: THREE.Vector3;
+}
 interface Hit {
   cell?: CellView;
   slice?: number;
+}
+interface Motion {
+  startPosition: THREE.Vector3;
+  targetPosition: THREE.Vector3;
+  startScale: number;
+  targetScale: number;
+  startOpacity: number;
+  targetOpacity: number;
 }
 
 // This module owns drawing, hit testing, and camera state only. Tensor values,
@@ -80,9 +94,12 @@ export function createTensorScene(
   let disposed = false;
   let sceneRadius = 3;
   let stepStartedAt = performance.now();
-  let previousAnimationStep = -1;
+  let previousAnimationKey = "";
   let resultGroup: THREE.Group | null = null;
   let resultCells: THREE.Mesh[] = [];
+  let vectorCells: VectorView[] = [];
+  let motions = new Map<CellView, Motion>();
+  let vectorMotions = new Map<VectorView, Motion>();
 
   function drawMath(element: HTMLElement, latex: string) {
     katex.render(latex, element, {
@@ -133,6 +150,9 @@ export function createTensorScene(
     targets = [];
     resultGroup = null;
     resultCells = [];
+    vectorCells = [];
+    motions.clear();
+    vectorMotions.clear();
     hovered = null;
   }
   function rebuild() {
@@ -269,6 +289,21 @@ export function createTensorScene(
       targets.push(mesh);
     }
     if (model.order === 3) {
+      const vectorX = -planeWidth / 2 - 1.7;
+      for (let index = 0; index < model.shape[0]; index += 1) {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.22), new THREE.MeshBasicMaterial({ color: "#d2a66f", transparent: true, opacity: 0, depthWrite: false }));
+        mesh.position.set(vectorX, ((model.shape[0] - 1) / 2 - index) * 1.08, 0.35);
+        const element = document.createElement("span");
+        element.className = "cell-label vector-label";
+        element.setAttribute("aria-hidden", "true");
+        const label = new CSS2DObject(element);
+        label.position.z = 0.14;
+        mesh.add(label);
+        content.add(mesh);
+        vectorCells.push({ index: index + 1, mesh, label, basePosition: mesh.position.clone() });
+      }
+    }
+    if (model.order === 3) {
       resultGroup = new THREE.Group();
       resultGroup.userData.width = model.shape[2];
       resultGroup.position.x = planeWidth / 2 + 2.2;
@@ -284,10 +319,48 @@ export function createTensorScene(
     }
     reset();
   }
+  function activeEventKind() {
+    return animation?.result?.events[animation.step]?.kind ?? null;
+  }
+  function isContractedComponent(cell: CellView) {
+    const output = animation?.outputIndices ?? [1, 1];
+    return Boolean(animation?.active && animation.operationId === "contraction-1d3d" && cell.indices.length === 3 && cell.indices[1] === output[0] && cell.indices[2] === output[1]);
+  }
+  function easeInOutCubic(value: number) {
+    return value < 0.5 ? 4 * value * value * value : 1 - Math.pow(-2 * value + 2, 3) / 2;
+  }
+  function prepareStepMotion() {
+    const event = activeEventKind();
+    motions.clear();
+    vectorMotions.clear();
+    for (const cell of cells) {
+      if (!isContractedComponent(cell)) continue;
+      const base = new THREE.Vector3(cell.mesh.userData.baseX as number, cell.mesh.position.y, cell.mesh.userData.baseZ as number);
+      const extracted = base.clone().add(new THREE.Vector3(0, 0, 1.15));
+      const formula = base.clone().add(new THREE.Vector3(3.4, 0.15, 1.35));
+      const summed = base.clone().add(new THREE.Vector3(4.25, -0.15, 0.7));
+      const stacked = formula.clone().add(new THREE.Vector3(0, 0.55, 0));
+      const paired = formula.clone().add(new THREE.Vector3(0.35, 0.15, 0));
+      const weighted = formula.clone().add(new THREE.Vector3(0.7, -0.1, 0));
+      const collapsed = summed.clone().add(new THREE.Vector3(0.45, 0, -0.2));
+      const target = event === "highlight" ? base : event === "extract" ? extracted : event === "moveToFormula" ? formula : event === "stackSlice" ? stacked : event === "pair" ? paired : event === "multiply" ? weighted : event === "sum" ? summed : event === "contractIndex" || event === "createResult" ? collapsed : base;
+      const targetScale = event === "multiply" ? 0.78 : event === "sum" || event === "contractIndex" || event === "createResult" ? 0.65 : 1;
+      const targetOpacity = event === "contractIndex" || event === "createResult" ? 0.12 : 0.82;
+      motions.set(cell, { startPosition: cell.mesh.position.clone(), targetPosition: target, startScale: cell.mesh.scale.x, targetScale, startOpacity: cell.mesh.material.opacity, targetOpacity });
+    }
+    for (const vectorCell of vectorCells) {
+      const extracted = vectorCell.basePosition.clone().add(new THREE.Vector3(0, 0, 0.8));
+      const formula = vectorCell.basePosition.clone().add(new THREE.Vector3(2.1, 0, 0.9));
+      const target = event === "extract" ? extracted : event === "moveToFormula" || event === "pair" ? formula : event === "multiply" ? formula.clone().add(new THREE.Vector3(0.55, 0, 0)) : event === "sum" || event === "contractIndex" || event === "createResult" ? formula.clone().add(new THREE.Vector3(1.3, -0.1, -0.2)) : vectorCell.basePosition.clone();
+      vectorMotions.set(vectorCell, { startPosition: vectorCell.mesh.position.clone(), targetPosition: target, startScale: vectorCell.mesh.scale.x, targetScale: event === "multiply" ? 0.78 : event === "contractIndex" || event === "createResult" ? 0.64 : 1, startOpacity: vectorCell.mesh.material.opacity, targetOpacity: event === "contractIndex" || event === "createResult" ? 0.16 : 0.9 });
+    }
+  }
   function refreshAppearance() {
     if (!model) return;
     const visualAnimationActive = Boolean(animation?.active && animation.operationId === "contraction-1d3d");
-    const phase = visualAnimationActive ? Math.min(1, Math.max(0, (performance.now() - stepStartedAt) / 1100)) : 0;
+    const phase = visualAnimationActive ? Math.min(1, Math.max(0, (performance.now() - stepStartedAt) / (animation?.durationMs ?? 1100))) : 0;
+    const eased = easeInOutCubic(phase);
+    const event = activeEventKind();
     const selectedKey = selection.component?.join(",");
     const dense = cells.length > 64;
     for (const cell of cells) {
@@ -301,16 +374,15 @@ export function createTensorScene(
       const output = animation?.outputIndices ?? [1, 1];
       const contractionSelected = visualActive && cell.indices.length === 3 && cell.indices[1] === output[0] && cell.indices[2] === output[1];
       const visualMuted = visualActive && !contractionSelected;
-      const moved = contractionSelected && (animation?.step ?? 0) >= 3;
-      cell.ghost.visible = Boolean(visualActive && contractionSelected && (animation?.step ?? 0) >= 2);
+      const motion = motions.get(cell);
+      cell.ghost.visible = Boolean(visualActive && contractionSelected && event !== "highlight");
       cell.ghost.material.opacity = cell.ghost.visible ? 0.16 : 0;
-      cell.ghost.position.set(cell.mesh.position.x, cell.mesh.position.y, cell.mesh.position.z - (cell.mesh.userData.lift ?? 0));
+      cell.ghost.position.set(cell.mesh.userData.baseX as number, cell.mesh.position.y, cell.mesh.userData.baseZ as number);
       cell.mesh.material.color.set(
         selected ? "#527aaf" : hover ? "#8baacc" : "#b9c9d9",
       );
-      const fade = moved && phase > 0.76 ? 1 - ((phase - 0.76) / 0.24) * 0.82 : 1;
       cell.mesh.material.opacity = contractionSelected
-        ? 0.82 * fade
+        ? motion ? THREE.MathUtils.lerp(motion.startOpacity, motion.targetOpacity, eased) : 0.82
         : visualMuted
           ? 0.045
           : selected
@@ -327,15 +399,10 @@ export function createTensorScene(
       );
       cell.outline.material.opacity =
         contractionSelected ? 1 : selected || hover ? 0.95 : muted ? 0.14 : sliceSelected ? 0.65 : 0.34;
-      const lift = contractionSelected && (animation?.step ?? 0) >= 1 ? 1.15 : 0;
-      const baseZ = cell.mesh.userData.baseZ as number;
-      cell.mesh.position.z += (baseZ + lift - cell.mesh.position.z) * 0.16;
-      cell.mesh.userData.lift = lift;
-      const targetX = moved ? Math.min(3.4, ((animation?.step ?? 3) - 2) * 0.9) : 0;
-      const baseX = cell.mesh.userData.baseX as number;
-      cell.mesh.position.x += (baseX + targetX - cell.mesh.position.x) * 0.16;
-      cell.mesh.userData.moveX = targetX;
-      cell.mesh.scale.setScalar(1 - (moved ? Math.min(0.3, ((animation?.step ?? 3) - 2) * 0.07) : 0));
+      if (motion) {
+        cell.mesh.position.lerpVectors(motion.startPosition, motion.targetPosition, eased);
+        cell.mesh.scale.setScalar(THREE.MathUtils.lerp(motion.startScale, motion.targetScale, eased));
+      }
       const element = cell.label.element;
       element.className = [
         "cell-label",
@@ -354,6 +421,20 @@ export function createTensorScene(
         cell.latex = latex;
       }
     }
+    const vector = animation?.result?.inputs[0];
+    for (const vectorCell of vectorCells) {
+      const active = visualAnimationActive;
+      const paired = event === "pair" || event === "multiply" || event === "sum" || event === "contractIndex";
+      const vectorMotion = vectorMotions.get(vectorCell);
+      if (vectorMotion) {
+        vectorCell.mesh.position.lerpVectors(vectorMotion.startPosition, vectorMotion.targetPosition, eased);
+        vectorCell.mesh.scale.setScalar(THREE.MathUtils.lerp(vectorMotion.startScale, vectorMotion.targetScale, eased));
+      }
+      vectorCell.mesh.material.opacity = active ? (vectorMotion ? THREE.MathUtils.lerp(vectorMotion.startOpacity, vectorMotion.targetOpacity, eased) : 0.9) : 0;
+      vectorCell.mesh.material.color.set(paired ? "#bf7d32" : "#d2a66f");
+      const latex = mode === "numeric" && vector ? String(vector.values[vectorCell.index - 1]) : `v_{${vectorCell.index}}`;
+      drawMath(vectorCell.label.element, latex);
+    }
     for (const slice of slices) {
       const selected = selection.slice === slice.index;
       const hover = hovered?.slice === slice.index && !hovered.cell;
@@ -367,9 +448,13 @@ export function createTensorScene(
       slice.outline.material.opacity = selected ? 0.95 : hover ? 0.7 : 0.3;
       slice.label.element.classList.toggle("is-selected", selected);
       slice.label.element.setAttribute("aria-pressed", String(selected));
+      if (visualAnimationActive && animation?.view === "slice") {
+        const vectorLatex = mode === "numeric" && vector ? String(vector.values[slice.index - 1]) : `v_{${slice.index}}`;
+        drawMath(slice.label.element, `${vectorLatex}\\,X_{${slice.index},:,:}`);
+      }
     }
     if (resultGroup) {
-      const show = Boolean(visualAnimationActive && (animation?.step ?? 0) >= 6);
+      const show = Boolean(visualAnimationActive && event === "createResult");
       resultGroup.visible = show;
       resultCells.forEach((cell, index) => {
         const active = animation?.outputIndices && index === ((animation.outputIndices[0] - 1) * ((resultGroup?.userData.width as number) ?? 1) + animation.outputIndices[1] - 1);
@@ -488,8 +573,10 @@ export function createTensorScene(
       selection = nextSelection;
       interaction = nextInteraction;
       animation = nextAnimation ?? null;
-      if ((nextAnimation?.step ?? -1) !== previousAnimationStep) {
-        previousAnimationStep = nextAnimation?.step ?? -1;
+      const animationKey = `${nextAnimation?.operationId ?? "none"}:${nextAnimation?.step ?? -1}:${Boolean(nextAnimation?.active)}`;
+      const stepChanged = animationKey !== previousAnimationKey;
+      if (stepChanged) {
+        previousAnimationKey = animationKey;
         stepStartedAt = performance.now();
       }
       const key = model.shape.join(",") + `:${model.order}`;
@@ -497,6 +584,7 @@ export function createTensorScene(
         shapeKey = key;
         rebuild();
       }
+      if (stepChanged) prepareStepMotion();
       refreshAppearance();
     },
     reset,

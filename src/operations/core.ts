@@ -92,7 +92,7 @@ export function contract1d3d(vector = sample([2], "v", 2), tensor = sample([2, 3
   const [, m, n] = tensor.shape; const values: number[] = [];
   for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) { let sum = 0; for (let alpha = 1; alpha <= vector.shape[0]; alpha++) sum += vector.values[alpha - 1] * tensor.values[offsetOf([alpha, i, j], tensor.shape)]; values.push(sum); }
   const first = vector.values.map((value, alpha) => `${value}\\cdot${tensor.values[offsetOf([alpha + 1, 1, 1], tensor.shape)]}`).join("+");
-  return result("1D × 3D Contraction", modelFromShape([m, n], values, "C"), [vector, tensor], `C_{ij}=\\sum_{\\alpha}v_{\\alpha}X_{\\alpha ij}`, "Component view: matching (i,j) entries across every matrix slice", `C_{11}=${first}=${values[0]}`, [{ kind: "stackSlice", label: "Keep the same (i,j) across slices" }, { kind: "pair", label: "Pair vα with Xαij" }, { kind: "multiply", label: "Weight each matrix slice" }, { kind: "sum", label: "Sum weighted slices" }, { kind: "contractIndex", label: "Contract α" }]);
+  return result("1D × 3D Contraction", modelFromShape([m, n], values, "C"), [vector, tensor], `C_{ij}=\\sum_{\\alpha}v_{\\alpha}X_{\\alpha ij}`, "Component view: matching (i,j) entries across every matrix slice", `C_{11}=${first}=${values[0]}`, [{ kind: "stackSlice", label: "Keep the same (i,j) across slices" }, { kind: "pair", label: "Pair vα with Xαij" }, { kind: "multiply", label: "Weight each matrix slice" }, { kind: "sum", label: "Sum weighted terms" }, { kind: "contractIndex", label: "Contract α" }]);
 }
 
 export function contract2d3d(matrix = sample([2, 2], "A", 1), tensor = sample([2, 2, 3], "X", 3)): OperationResult {

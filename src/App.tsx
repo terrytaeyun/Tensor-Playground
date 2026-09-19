@@ -19,7 +19,7 @@ export default function App() {
   const [selection, setSelection] = useState<TensorSelection>(EMPTY_SELECTION);
   const [operationId, setOperationId] = useState("explore");
   const [operationResult, setOperationResult] = useState<OperationResult | null>(null);
-  const [animation, setAnimation] = useState<VisualAnimationState>({ operationId: "explore", step: 0, view: "component", outputIndices: [1, 1], active: false, result: null });
+  const [animation, setAnimation] = useState<VisualAnimationState>({ operationId: "explore", step: 0, view: "component", outputIndices: [1, 1], active: false, result: null, durationMs: 1100 });
   const operation = getOperation(operationId);
   function changeAxes(axes: AxisMetadata[]) {
     const next = createTensorModel(axes, model);
