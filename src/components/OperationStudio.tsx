@@ -1,12 +1,21 @@
 import { useEffect, useState } from "react";
 import { clampAnimationStep, EVENT_NAMES } from "../animation/engine";
 import { runOperation } from "../operations/run";
-import type { OperationResult, TensorModel } from "../types";
+import type { OperationResult, TensorModel, VisualAnimationState } from "../types";
 import { MathText } from "./MathText";
 
-const speedMs = { Slow: 1400, Normal: 800, Fast: 350 } as const;
+const speedMs = { Slow: 1900, Normal: 1100, Fast: 700 } as const;
 type Speed = keyof typeof speedMs;
-export function OperationStudio({ operationId, source, onResult }: { operationId: string; source: TensorModel; onResult: (result: OperationResult | null) => void }) {
+function progressiveLatex(result: OperationResult, step: number, source: TensorModel) {
+  if (!result.name.includes("1D × 3D")) return result.events[step]?.latex ?? result.formula;
+  const rank = source.shape[0] ?? 1;
+  if (step <= 0) return "C_{ij}=";
+  if (step >= result.events.length - 1) return result.formula;
+  const count = Math.min(rank, Math.max(1, step));
+  const terms = Array.from({ length: count }, (_, index) => `v_{${index + 1}}X_{${index + 1}ij}`);
+  return `C_{ij}=${terms.join("+")}`;
+}
+export function OperationStudio({ operationId, source, onResult, onAnimation }: { operationId: string; source: TensorModel; onResult: (result: OperationResult | null) => void; onAnimation: (frame: Partial<VisualAnimationState>) => void }) {
   const [targetShape, setTargetShape] = useState("3, 2, 4");
   const [permutation, setPermutation] = useState("1, 3, 2");
   const [axis, setAxis] = useState(1);
@@ -17,6 +26,9 @@ export function OperationStudio({ operationId, source, onResult }: { operationId
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<Speed>("Normal");
   const [error, setError] = useState("");
+  const [view] = useState<"component" | "slice">("component");
+  const [outputIndices] = useState([1, 1]);
+  useEffect(() => { onAnimation({ operationId, step, view, outputIndices, active: Boolean(result), result }); }, [operationId, step, view, outputIndices, result, onAnimation]);
   useEffect(() => {
     if (!playing || !result) return;
     const id = window.setTimeout(() => setStep(current => {
@@ -40,6 +52,6 @@ export function OperationStudio({ operationId, source, onResult }: { operationId
     {operationId === "einsum" ? <label>Einstein notation<input aria-label="Einstein notation" value={einsum} onChange={e => setEinsum(e.target.value)} /></label> : null}
     <div className="studio-actions"><button className="run-button" onClick={run}>Run operation</button><label>Speed<select aria-label="Animation speed" value={speed} onChange={e => setSpeed(e.target.value as Speed)}>{Object.keys(speedMs).map(value => <option key={value}>{value}</option>)}</select></label></div>
     {error ? <p className="operation-error" role="alert">{error}</p> : null}
-    {result ? <div className="operation-result"><p className="result-name">{result.name} <span>→ Shape ({result.result.shape.join(", ")})</span></p><p className="operation-detail">{result.detail}</p><div className="event-track">{result.events.map((event, index) => <button key={`${event.kind}-${index}`} aria-pressed={step === index} className={index <= step ? "is-complete" : ""} onClick={() => { setPlaying(false); setStep(index); }}><span>{index + 1}</span>{EVENT_NAMES[event.kind]}</button>)}</div><div className="event-current"><MathText latex={result.events[step]?.latex ?? result.formula} /><p>{result.events[step]?.label}</p>{result.numericFormula ? <MathText className="numeric-formula" latex={result.numericFormula} /> : null}</div><div className="player-controls"><button onClick={() => { setPlaying(false); setStep(value => clampAnimationStep(value - 1, result.events)); }}>Previous</button><button onClick={() => setPlaying(value => !value)}>{playing ? "Pause" : "Play"}</button><button onClick={() => { setPlaying(false); setStep(value => clampAnimationStep(value + 1, result.events)); }}>Next</button><button onClick={() => { setStep(0); setPlaying(true); }}>Replay</button></div></div> : null}
+    {result ? <div className="operation-result"><p className="result-name">{result.name} <span>→ Shape ({result.result.shape.join(", ")})</span></p><p className="operation-detail">{result.detail}</p><div className="event-track">{result.events.map((event, index) => <button key={`${event.kind}-${index}`} aria-pressed={step === index} className={index <= step ? "is-complete" : ""} onClick={() => { setPlaying(false); setStep(index); }}><span>{index + 1}</span>{EVENT_NAMES[event.kind]}</button>)}</div><div className="event-current"><MathText latex={progressiveLatex(result, step, source)} /><p>{result.events[step]?.label}</p>{result.numericFormula && step >= 2 ? <MathText className="numeric-formula" latex={result.numericFormula} /> : null}</div><div className="player-controls"><button onClick={() => { setPlaying(false); setStep(value => clampAnimationStep(value - 1, result.events)); }}>Previous</button><button onClick={() => setPlaying(value => !value)}>{playing ? "Pause" : "Play"}</button><button onClick={() => { setPlaying(false); setStep(value => clampAnimationStep(value + 1, result.events)); }}>Next</button><button onClick={() => { setStep(0); setPlaying(true); }}>Replay</button></div></div> : null}
   </section>;
 }

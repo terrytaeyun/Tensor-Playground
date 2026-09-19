@@ -10,6 +10,7 @@ import type {
   InteractionMode,
   TensorModel,
   TensorSelection,
+  VisualAnimationState,
 } from "../types";
 import { tensorCells } from "../model/tensor";
 import { componentLatex, sliceLatex } from "../utils/notation";
@@ -26,6 +27,7 @@ interface CellView {
   outline: THREE.LineSegments<THREE.EdgesGeometry, THREE.LineBasicMaterial>;
   label: CSS2DObject;
   latex: string;
+  ghost: THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>;
 }
 interface SliceView {
   index: number;
@@ -67,6 +69,7 @@ export function createTensorScene(
   let mode: DisplayMode = "symbolic";
   let selection: TensorSelection = { component: null, slice: null };
   let interaction: InteractionMode = "component";
+  let animation: VisualAnimationState | null = null;
   let cells: CellView[] = [];
   let slices: SliceView[] = [];
   let targets: THREE.Object3D[] = [];
@@ -76,6 +79,10 @@ export function createTensorScene(
   let shapeKey = "";
   let disposed = false;
   let sceneRadius = 3;
+  let stepStartedAt = performance.now();
+  let previousAnimationStep = -1;
+  let resultGroup: THREE.Group | null = null;
+  let resultCells: THREE.Mesh[] = [];
 
   function drawMath(element: HTMLElement, latex: string) {
     katex.render(latex, element, {
@@ -124,6 +131,8 @@ export function createTensorScene(
     cells = [];
     slices = [];
     targets = [];
+    resultGroup = null;
+    resultCells = [];
     hovered = null;
   }
   function rebuild() {
@@ -163,6 +172,7 @@ export function createTensorScene(
           }),
         );
         plane.position.z = z - 0.085;
+        plane.userData.baseX = plane.position.x;
         const outline = new THREE.LineSegments(
           new THREE.EdgesGeometry(geometry),
           new THREE.LineBasicMaterial({
@@ -222,6 +232,12 @@ export function createTensorScene(
         ((rows - 1) / 2 - row) * spacing,
         ((count - 1) / 2 - sliceIndex) * sliceSpacing,
       );
+      mesh.userData.baseX = mesh.position.x;
+      mesh.userData.baseZ = mesh.position.z;
+      const ghost = new THREE.Mesh(geometry.clone(), new THREE.MeshBasicMaterial({ color: "#90a5bb", transparent: true, opacity: 0, depthWrite: false }));
+      ghost.position.copy(mesh.position);
+      ghost.renderOrder = -1;
+      content.add(ghost);
       const outline = new THREE.LineSegments(
         new THREE.EdgesGeometry(geometry),
         new THREE.LineBasicMaterial({
@@ -245,16 +261,33 @@ export function createTensorScene(
         outline,
         label,
         latex: "",
+        ghost,
       };
       mesh.userData.cell = view;
       content.add(mesh);
       cells.push(view);
       targets.push(mesh);
     }
+    if (model.order === 3) {
+      resultGroup = new THREE.Group();
+      resultGroup.userData.width = model.shape[2];
+      resultGroup.position.x = planeWidth / 2 + 2.2;
+      resultGroup.visible = false;
+      const rw = model.shape[2];
+      const rh = model.shape[1];
+      for (let row = 0; row < rh; row += 1) for (let col = 0; col < rw; col += 1) {
+        const cell = new THREE.Mesh(new THREE.BoxGeometry(0.96, 0.96, 0.16), new THREE.MeshBasicMaterial({ color: "#5f86b5", transparent: true, opacity: 0.7, depthWrite: false }));
+        cell.position.set((col - (rw - 1) / 2) * spacing, ((rh - 1) / 2 - row) * spacing, 0);
+        resultGroup.add(cell); resultCells.push(cell);
+      }
+      content.add(resultGroup);
+    }
     reset();
   }
   function refreshAppearance() {
     if (!model) return;
+    const visualAnimationActive = Boolean(animation?.active && animation.operationId === "contraction-1d3d");
+    const phase = visualAnimationActive ? Math.min(1, Math.max(0, (performance.now() - stepStartedAt) / 1100)) : 0;
     const selectedKey = selection.component?.join(",");
     const dense = cells.length > 64;
     for (const cell of cells) {
@@ -264,10 +297,23 @@ export function createTensorScene(
       const sliceSelected =
         selection.slice !== null && selection.slice === cell.slice;
       const muted = selection.slice !== null && selection.slice !== cell.slice;
+      const visualActive = animation?.active && animation.operationId === "contraction-1d3d";
+      const output = animation?.outputIndices ?? [1, 1];
+      const contractionSelected = visualActive && cell.indices.length === 3 && cell.indices[1] === output[0] && cell.indices[2] === output[1];
+      const visualMuted = visualActive && !contractionSelected;
+      const moved = contractionSelected && (animation?.step ?? 0) >= 3;
+      cell.ghost.visible = Boolean(visualActive && contractionSelected && (animation?.step ?? 0) >= 2);
+      cell.ghost.material.opacity = cell.ghost.visible ? 0.16 : 0;
+      cell.ghost.position.set(cell.mesh.position.x, cell.mesh.position.y, cell.mesh.position.z - (cell.mesh.userData.lift ?? 0));
       cell.mesh.material.color.set(
         selected ? "#527aaf" : hover ? "#8baacc" : "#b9c9d9",
       );
-      cell.mesh.material.opacity = selected
+      const fade = moved && phase > 0.76 ? 1 - ((phase - 0.76) / 0.24) * 0.82 : 1;
+      cell.mesh.material.opacity = contractionSelected
+        ? 0.82 * fade
+        : visualMuted
+          ? 0.045
+          : selected
         ? 0.65
         : hover
           ? 0.48
@@ -280,7 +326,16 @@ export function createTensorScene(
         selected || hover ? "#3b6395" : "#8197af",
       );
       cell.outline.material.opacity =
-        selected || hover ? 0.95 : muted ? 0.14 : sliceSelected ? 0.65 : 0.34;
+        contractionSelected ? 1 : selected || hover ? 0.95 : muted ? 0.14 : sliceSelected ? 0.65 : 0.34;
+      const lift = contractionSelected && (animation?.step ?? 0) >= 1 ? 1.15 : 0;
+      const baseZ = cell.mesh.userData.baseZ as number;
+      cell.mesh.position.z += (baseZ + lift - cell.mesh.position.z) * 0.16;
+      cell.mesh.userData.lift = lift;
+      const targetX = moved ? Math.min(3.4, ((animation?.step ?? 3) - 2) * 0.9) : 0;
+      const baseX = cell.mesh.userData.baseX as number;
+      cell.mesh.position.x += (baseX + targetX - cell.mesh.position.x) * 0.16;
+      cell.mesh.userData.moveX = targetX;
+      cell.mesh.scale.setScalar(1 - (moved ? Math.min(0.3, ((animation?.step ?? 3) - 2) * 0.07) : 0));
       const element = cell.label.element;
       element.className = [
         "cell-label",
@@ -302,11 +357,24 @@ export function createTensorScene(
     for (const slice of slices) {
       const selected = selection.slice === slice.index;
       const hover = hovered?.slice === slice.index && !hovered.cell;
-      slice.plane.material.opacity = selected ? 0.12 : hover ? 0.09 : 0.035;
+      const sliceAnimation = visualAnimationActive && animation?.view === "slice";
+      const weighted = sliceAnimation && (animation?.step ?? 0) >= 2;
+      const sliceBaseX = slice.plane.userData.baseX as number;
+      slice.plane.position.x += (sliceBaseX + (weighted ? 0.65 : 0) - slice.plane.position.x) * 0.12;
+      slice.plane.userData.moveX = weighted ? 0.25 : 0;
+      slice.plane.material.opacity = weighted ? 0.16 : selected ? 0.12 : hover ? 0.09 : 0.035;
       slice.outline.material.color.set(selected ? "#3b6395" : "#7288a5");
       slice.outline.material.opacity = selected ? 0.95 : hover ? 0.7 : 0.3;
       slice.label.element.classList.toggle("is-selected", selected);
       slice.label.element.setAttribute("aria-pressed", String(selected));
+    }
+    if (resultGroup) {
+      const show = Boolean(visualAnimationActive && (animation?.step ?? 0) >= 6);
+      resultGroup.visible = show;
+      resultCells.forEach((cell, index) => {
+        const active = animation?.outputIndices && index === ((animation.outputIndices[0] - 1) * ((resultGroup?.userData.width as number) ?? 1) + animation.outputIndices[1] - 1);
+        (cell.material as THREE.MeshBasicMaterial).opacity = active ? 1 : 0.45;
+      });
     }
   }
   function hitAt(event: PointerEvent): Hit | null {
@@ -392,6 +460,10 @@ export function createTensorScene(
   renderer.setAnimationLoop(() => {
     if (disposed) return;
     controls.update();
+    // Keep visual interpolation alive independently from React playback updates.
+    // React changes the target once per step; Three.js advances toward that target
+    // on every rendered frame so a step cannot appear to stall after one tick.
+    refreshAppearance();
     renderer.render(scene, camera);
     labels.render(scene, camera);
     // CSS2D depth sorting is overridden only for the active cell's legibility.
@@ -409,11 +481,17 @@ export function createTensorScene(
       nextMode: DisplayMode,
       nextSelection: TensorSelection,
       nextInteraction: InteractionMode,
+      nextAnimation?: VisualAnimationState,
     ) {
       model = nextModel;
       mode = nextMode;
       selection = nextSelection;
       interaction = nextInteraction;
+      animation = nextAnimation ?? null;
+      if ((nextAnimation?.step ?? -1) !== previousAnimationStep) {
+        previousAnimationStep = nextAnimation?.step ?? -1;
+        stepStartedAt = performance.now();
+      }
       const key = model.shape.join(",") + `:${model.order}`;
       if (key !== shapeKey) {
         shapeKey = key;

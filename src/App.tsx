@@ -11,7 +11,7 @@ import {
 } from "./model/tensor";
 import { getOperation } from "./operations";
 import { OperationStudio } from "./components/OperationStudio";
-import type { AxisMetadata, DisplayMode, OperationResult, TensorSelection } from "./types";
+import type { AxisMetadata, DisplayMode, OperationResult, TensorSelection, VisualAnimationState } from "./types";
 
 export default function App() {
   const [model, setModel] = useState(() => createTensorModel(INITIAL_AXES));
@@ -19,11 +19,13 @@ export default function App() {
   const [selection, setSelection] = useState<TensorSelection>(EMPTY_SELECTION);
   const [operationId, setOperationId] = useState("explore");
   const [operationResult, setOperationResult] = useState<OperationResult | null>(null);
+  const [animation, setAnimation] = useState<VisualAnimationState>({ operationId: "explore", step: 0, view: "component", outputIndices: [1, 1], active: false, result: null });
   const operation = getOperation(operationId);
   function changeAxes(axes: AxisMetadata[]) {
     const next = createTensorModel(axes, model);
     setModel(next);
     setOperationResult(null);
+    setAnimation(current => ({ ...current, active: false, result: null, step: 0 }));
     setSelection(validSelection(selection, next));
     if (next.order < (operation.minimumOrder ?? 0)) setOperationId("explore");
   }
@@ -37,6 +39,7 @@ export default function App() {
     setSelection({ component: null, slice });
   }
   const receiveResult = useCallback((next: OperationResult | null) => setOperationResult(next), []);
+  const receiveAnimation = useCallback((frame: Partial<VisualAnimationState>) => setAnimation(current => ({ ...current, ...frame })), []);
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -50,12 +53,13 @@ export default function App() {
             mode={mode}
             selection={selection}
             interaction={operation.interaction ?? "component"}
+            animation={animation}
             onComponentSelect={selectComponent}
             onSliceSelect={selectSlice}
             onClear={() => setSelection(EMPTY_SELECTION)}
           />
           <FormulaPanel model={model} mode={mode} selection={selection} operationResult={operationResult} />
-          <OperationStudio key={`${operationId}:${model.shape.join(",")}:${model.values.join(",")}`} operationId={operationId} source={model} onResult={receiveResult} />
+          <OperationStudio key={`${operationId}:${model.shape.join(",")}:${model.values.join(",")}`} operationId={operationId} source={model} onResult={receiveResult} onAnimation={receiveAnimation} />
         </div>
         <ControlPanel
           model={model}

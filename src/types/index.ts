@@ -60,3 +60,11 @@ export interface OperationResult {
   detail: string;
   events: AnimationEvent[];
 }
+export interface VisualAnimationState {
+  operationId: string;
+  step: number;
+  view: "component" | "slice";
+  outputIndices: number[];
+  active: boolean;
+  result: OperationResult | null;
+}

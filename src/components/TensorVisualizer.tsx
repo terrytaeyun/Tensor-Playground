@@ -4,6 +4,7 @@ import type {
   InteractionMode,
   TensorModel,
   TensorSelection,
+  VisualAnimationState,
 } from "../types";
 import { createTensorScene } from "../visualization/createTensorScene";
 import { generalComponent, tensorSpace } from "../utils/notation";
@@ -16,6 +17,7 @@ interface Props {
   onComponentSelect: (indices: number[]) => void;
   onSliceSelect: (slice: number) => void;
   onClear: () => void;
+  animation: VisualAnimationState;
 }
 export function TensorVisualizer({
   model,
@@ -25,6 +27,7 @@ export function TensorVisualizer({
   onComponentSelect,
   onSliceSelect,
   onClear,
+  animation,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const scene = useRef<ReturnType<typeof createTensorScene> | null>(null);
@@ -50,8 +53,8 @@ export function TensorVisualizer({
     };
   }, []);
   useEffect(() => {
-    scene.current?.update(model, mode, selection, interaction);
-  }, [model, mode, selection, interaction]);
+    scene.current?.update(model, mode, selection, interaction, animation);
+  }, [model, mode, selection, interaction, animation]);
   return (
     <section className="visualizer" aria-label="Tensor visualization">
       <div className="abstract-notation">
