@@ -63,7 +63,7 @@ export interface OperationResult {
 export interface VisualAnimationState {
   operationId: string;
   step: number;
-  view: "component" | "slice";
+  view: "component" | "slice" | "tensor" | "vectorized";
   outputIndices: number[];
   active: boolean;
   result: OperationResult | null;

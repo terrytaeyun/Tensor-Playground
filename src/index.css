@@ -82,8 +82,9 @@ select {
 }
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 7fr) minmax(265px, 3fr);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
   gap: 38px;
+  align-items: start;
 }
 .canvas-column {
   min-width: 0;
@@ -181,9 +182,24 @@ select {
   white-space: nowrap;
 }
 .controls {
-  padding: 6px 14px 0 22px;
-  max-width: 370px;
+  padding: 6px 12px 0;
+  max-width: none;
 }
+.right-sidebar {
+  min-width: 0;
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 118px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 0 8px 18px 10px;
+}
+.right-sidebar fieldset { margin-bottom: 18px; }
+.right-sidebar .tensor-kind { margin-bottom: 20px; }
+.right-sidebar .operation-control { margin-top: 22px; }
+.right-sidebar .operation-result { margin-top: 14px; }
+.right-sidebar .operation-studio { margin-left: 12px; margin-right: 12px; }
 .controls h2 {
   font-size: 13px;
   font-weight: 600;
@@ -295,10 +311,14 @@ input[aria-invalid="true"] {
   padding: 8px;
   font-size: 12px;
 }
-.operation-studio { margin: 18px 12px 0; padding: 18px 0 4px; border-top: 1px solid #edf0f3; max-width: 840px; }
+.operation-studio { margin: 18px 12px 0; padding: 18px 0 4px; border-top: 1px solid #edf0f3; max-width: none; }
 .studio-title, .result-name { font-size: 12px; color: #536275; margin-bottom: 12px; }
 .operation-studio label { display: block; color: #718090; font-size: 10px; margin: 0 0 12px; }
 .operation-studio input, .operation-studio select { display: block; width: 100%; margin-top: 6px; padding: 7px; font-size: 12px; }
+.view-toggle { display: flex; align-items: center; gap: 8px; margin: 10px 0 12px; }
+.view-toggle button { border: 0; border-bottom: 1px solid #d7dee6; background: transparent; padding: 6px 2px; color: #7a8794; }
+.view-toggle button[aria-pressed="true"] { border-color: #4f759f; color: #315f91; }
+.chain-flow { margin: 10px 0 14px; color: #365d86; min-height: 28px; }
 .studio-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .studio-actions, .player-controls { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
 .studio-actions label { width: 90px; margin: 0; }
@@ -316,6 +336,7 @@ input[aria-invalid="true"] {
 .event-current { padding: 15px 0 4px; min-height: 70px; color: #355c87; font-size: 18px; }
 .event-current p { color: #84909f; font-size: 10px; margin-top: 8px; }
 .numeric-formula { display: block; color: #69798a; font-size: 12px; margin-top: 9px; }
+.formula-step { color: #84909f; font-size: 11px; margin: -7px 0 12px; }
 .operation-formula { color: #355c87; font-size: 18px; margin: 0 0 16px; }
 .result-tensor { margin: 14px 0 20px; max-width: 330px; }
 .result-tensor > p, .result-tensor small { color: #7f8c9c; font-size: 10px; }
@@ -394,7 +415,7 @@ input[aria-invalid="true"] {
   }
   .workspace {
     gap: 18px;
-    grid-template-columns: minmax(0, 7fr) minmax(240px, 3fr);
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
   }
   .controls {
     padding: 6px 0;
@@ -414,6 +435,12 @@ input[aria-invalid="true"] {
   .workspace {
     grid-template-columns: 1fr;
     gap: 16px;
+  }
+  .right-sidebar {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    padding: 0;
   }
   .scene {
     height: 370px;

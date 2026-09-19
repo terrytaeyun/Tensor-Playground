@@ -44,6 +44,7 @@ interface VectorView {
 interface OperandView {
   input: number;
   indices: number[];
+  offset: number;
   mesh: THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>;
   label: CSS2DObject;
   basePosition: THREE.Vector3;
@@ -122,23 +123,58 @@ export function createTensorScene(
   }
   function reset() {
     if (!model) return;
-    const bounds = new THREE.Box3().setFromObject(content);
+    const framingRoot = operandGroup ?? content;
+    const bounds = new THREE.Box3().setFromObject(framingRoot);
+    if (bounds.isEmpty()) return;
+    const boundsSize = bounds.getSize(new THREE.Vector3());
+    const labelPadding = Math.max(0.28, Math.min(boundsSize.x, boundsSize.y) * 0.045);
+    bounds.expandByScalar(labelPadding);
     const sphere = bounds.getBoundingSphere(new THREE.Sphere());
     sceneRadius = Math.max(sphere.radius, 1.1);
     const vertical = THREE.MathUtils.degToRad(camera.fov / 2);
     const horizontal = Math.atan(Math.tan(vertical) * camera.aspect);
-    const distance =
-      (sceneRadius / Math.sin(Math.min(vertical, horizontal))) * 1.13;
     const direction =
       model.order === 3
         ? new THREE.Vector3(0.63, 0.28, 1)
         : new THREE.Vector3(0.1, 0.08, 1);
+    direction.normalize();
+    const right = new THREE.Vector3().crossVectors(camera.up, direction).normalize();
+    const viewUp = new THREE.Vector3().crossVectors(direction, right).normalize();
+    const corners = [
+      new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z),
+      new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.max.z),
+      new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
+      new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.max.z),
+      new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z),
+      new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.max.z),
+      new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z),
+      new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.max.z),
+    ];
+    const tanVertical = Math.tan(vertical);
+    const tanHorizontal = Math.tan(horizontal);
+    const tightDistance = corners.reduce((required, corner) => {
+      const relative = corner.sub(sphere.center);
+      const depthOffset = relative.dot(direction);
+      return Math.max(
+        required,
+        depthOffset + Math.abs(relative.dot(right)) / tanHorizontal,
+        depthOffset + Math.abs(relative.dot(viewUp)) / tanVertical,
+      );
+    }, 0);
+    // Fit the actual projected box rather than shrinking a bounding sphere.
+    // The headroom targets roughly 55–70% viewport occupancy and protects the
+    // CSS labels; narrow canvases retain a little more breathing room.
+    const framingHeadroom = camera.aspect < 1.15 ? 1.5 : 1.34;
+    const distance = Math.max(tightDistance * framingHeadroom, sceneRadius * 1.05);
     camera.position.copy(
-      direction.normalize().multiplyScalar(distance).add(sphere.center),
+      direction.multiplyScalar(distance).add(sphere.center),
     );
     controls.target.copy(sphere.center);
     controls.minDistance = Math.max(1.7, sceneRadius * 0.65);
     controls.maxDistance = Math.max(80, distance * 4);
+    camera.near = Math.max(0.05, distance - sceneRadius * 2.4);
+    camera.far = Math.max(500, distance + sceneRadius * 8);
+    camera.updateProjectionMatrix();
     controls.update();
     controls.saveState();
   }
@@ -357,21 +393,22 @@ export function createTensorScene(
   function buildOperationOperands() {
     const result = animation?.result;
     const operationId = animation?.operationId;
-    const key = result && operationId ? `${operationId}:${result.inputs.map(input => input.shape.join("x")).join("|")}` : "";
-    if (key === operandKey) return;
+    const key = result && operationId ? `${operationId}:${animation?.view}:${result.inputs.map(input => input.shape.join("x")).join("|")}` : "";
+    if (key === operandKey) return false;
     clearOperandGroup();
     operandKey = key;
-    if (!result || !operationId || operationId === "contraction-1d3d" || operationId === "explore") return;
+    if (!result || !operationId || operationId === "contraction-1d3d" || operationId === "explore") return true;
     operandGroup = new THREE.Group();
     const gap = 5.4;
     result.inputs.forEach((input, inputIndex) => {
-      const rows = input.order >= 2 ? input.shape[input.order - 2] : 1;
-      const columns = input.order >= 1 ? input.shape[input.order - 1] : 1;
-      const slicesCount = input.order === 3 ? input.shape[0] : 1;
+      const vectorized = operationId === "tensor-chain-rule" && animation?.view === "vectorized" && input.order === 3;
+      const rows = vectorized ? input.shape[0] : input.order >= 2 ? input.shape[input.order - 2] : 1;
+      const columns = vectorized ? input.shape.slice(1).reduce((product, size) => product * size, 1) : input.order >= 1 ? input.shape[input.order - 1] : 1;
+      const slicesCount = vectorized ? 1 : input.order === 3 ? input.shape[0] : 1;
       for (const cell of tensorCells(input)) {
-        const slice = input.order === 3 ? cell.indices[0] - 1 : 0;
-        const row = input.order >= 2 ? cell.indices[input.order - 2] - 1 : 0;
-        const column = input.order >= 1 ? cell.indices[input.order - 1] - 1 : 0;
+        const slice = input.order === 3 && !vectorized ? cell.indices[0] - 1 : 0;
+        const row = vectorized ? cell.indices[0] - 1 : input.order >= 2 ? cell.indices[input.order - 2] - 1 : 0;
+        const column = vectorized ? (cell.indices[1] - 1) * input.shape[2] + cell.indices[2] - 1 : input.order >= 1 ? cell.indices[input.order - 1] - 1 : 0;
         const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.76, 0.14), new THREE.MeshBasicMaterial({ color: inputIndex === 0 ? "#83a8ca" : "#d2a66f", transparent: true, opacity: 0.5, depthWrite: false }));
         mesh.position.set((inputIndex - (result.inputs.length - 1) / 2) * gap + (column - (columns - 1) / 2) * 0.88, ((rows - 1) / 2 - row) * 0.88, (slicesCount - 1 - slice) * 0.9 + 1.1);
         const element = document.createElement("span");
@@ -382,21 +419,23 @@ export function createTensorScene(
         label.position.z = 0.1;
         mesh.add(label);
         operandGroup?.add(mesh);
-        operandCells.push({ input: inputIndex, indices: cell.indices, mesh, label, basePosition: mesh.position.clone() });
+        operandCells.push({ input: inputIndex, indices: cell.indices, offset: cell.offset, mesh, label, basePosition: mesh.position.clone() });
       }
     });
     const output = result.result;
     genericResultGroup = new THREE.Group();
     genericResultGroup.position.set(0, -2.45, 1.2);
     genericResultGroup.visible = false;
-    const outputRows = output.order >= 2 ? output.shape[output.order - 2] : 1;
-    const outputColumns = output.order >= 1 ? output.shape[output.order - 1] : 1;
+    const vectorizedOutput = operationId === "tensor-chain-rule" && animation?.view === "vectorized" && output.order === 3;
+    const outputRows = vectorizedOutput ? output.shape[0] : output.order >= 2 ? output.shape[output.order - 2] : 1;
+    const outputColumns = vectorizedOutput ? output.shape.slice(1).reduce((product, size) => product * size, 1) : output.order >= 1 ? output.shape[output.order - 1] : 1;
     const outputCells = tensorCells(output).slice(0, 36);
     for (const cell of outputCells) {
-      const row = output.order >= 2 ? cell.indices[output.order - 2] - 1 : 0;
-      const column = output.order >= 1 ? cell.indices[output.order - 1] - 1 : 0;
+      const outputSlice = output.order === 3 && !vectorizedOutput ? cell.indices[0] - 1 : 0;
+      const row = vectorizedOutput ? cell.indices[0] - 1 : output.order >= 2 ? cell.indices[output.order - 2] - 1 : 0;
+      const column = vectorizedOutput ? (cell.indices[1] - 1) * output.shape[2] + cell.indices[2] - 1 : output.order >= 1 ? cell.indices[output.order - 1] - 1 : 0;
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.72, 0.16), new THREE.MeshBasicMaterial({ color: "#527aaf", transparent: true, opacity: 0.78, depthWrite: false }));
-      mesh.position.set((column - (outputColumns - 1) / 2) * 0.8, ((outputRows - 1) / 2 - row) * 0.8, 0);
+      mesh.position.set((column - (outputColumns - 1) / 2) * 0.8, ((outputRows - 1) / 2 - row) * 0.8, output.order === 3 && !vectorizedOutput ? (output.shape[0] - 1 - outputSlice) * 0.75 : 0);
       const element = document.createElement("span");
       element.className = "cell-label operation-result-label";
       element.setAttribute("aria-hidden", "true");
@@ -408,6 +447,7 @@ export function createTensorScene(
     }
     operandGroup.add(genericResultGroup);
     content.add(operandGroup);
+    return true;
   }
   function isContractedComponent(cell: CellView) {
     const output = animation?.outputIndices ?? [1, 1];
@@ -456,7 +496,25 @@ export function createTensorScene(
       const paired = operand.basePosition.clone().add(new THREE.Vector3(direction * 1.15, 0, 1.1));
       const formula = new THREE.Vector3(direction * 0.45, -2.1, 2.1);
       const summed = new THREE.Vector3(0, -2.35, 1.65);
-      const target = event === "extract" ? extracted : event === "moveToFormula" || event === "pair" ? paired : event === "multiply" ? formula : event === "sum" || event === "contractIndex" || event === "createResult" ? summed : operand.basePosition.clone();
+      let target = event === "extract" ? extracted : event === "moveToFormula" || event === "pair" ? paired : event === "multiply" ? formula : event === "sum" || event === "contractIndex" || event === "createResult" ? summed : operand.basePosition.clone();
+      if (animation?.operationId === "reshape") {
+        if ((event === "moveToFormula" && animation.step <= 2) || (event === "extract" && animation.step > 2)) target = new THREE.Vector3((operand.offset - (operandCells.length - 1) / 2) * 0.42, -1.8, 1.8);
+        if ((event === "moveToFormula" && animation.step > 2) || event === "createResult") target = new THREE.Vector3((operand.offset % (animation.result?.result.shape.at(-1) ?? 1) - ((animation.result?.result.shape.at(-1) ?? 1) - 1) / 2) * 0.78, -2.15 + Math.floor(operand.offset / (animation.result?.result.shape.at(-1) ?? 1)) * -0.12, 1.3);
+      }
+      if (animation?.operationId === "reduction" && (event === "sum" || event === "contractIndex" || event === "createResult")) target = new THREE.Vector3(0, -2.2, 1.5);
+      if (animation?.operationId === "transpose" && (event === "moveToFormula" || event === "createResult")) {
+        const inputValue = animation.result?.inputs[operand.input]?.values[operand.offset];
+        const output = animation.result?.result;
+        const outputOffset = output?.values.indexOf(inputValue ?? Number.NaN) ?? -1;
+        if (output && outputOffset >= 0) {
+          const columns = output.shape.at(-1) ?? 1;
+          const rows = output.order >= 2 ? output.shape[output.order - 2] : 1;
+          const column = outputOffset % columns;
+          const row = Math.floor(outputOffset / columns) % rows;
+          const slice = output.order === 3 ? Math.floor(outputOffset / (rows * columns)) : 0;
+          target = new THREE.Vector3((column - (columns - 1) / 2) * 0.78, ((rows - 1) / 2 - row) * 0.78, (output.order === 3 ? output.shape[0] - 1 - slice : 0) * 0.75 + 1.25);
+        }
+      }
       operandMotions.set(operand, { startPosition: operand.mesh.position.clone(), targetPosition: target, startScale: operand.mesh.scale.x, targetScale: event === "multiply" ? 0.76 : event === "sum" || event === "contractIndex" ? 0.62 : 1, startOpacity: operand.mesh.material.opacity, targetOpacity: event === "contractIndex" || event === "createResult" ? 0.15 : 0.9 });
     }
   }
@@ -555,7 +613,7 @@ export function createTensorScene(
       operand.mesh.material.color.set(active ? (operand.input === 0 ? "#4f82b2" : "#bf7d32") : "#c8d0d8");
       operand.label.element.classList.toggle("is-muted", !active);
     }
-    if (genericResultGroup) genericResultGroup.visible = event === "createResult";
+    if (genericResultGroup) genericResultGroup.visible = event === "createResult" || (animation?.operationId === "matrix-vector-derivative" && event === "stackSlice");
     for (const slice of slices) {
       const selected = selection.slice === slice.index;
       const hover = hovered?.slice === slice.index && !hovered.cell;
@@ -694,7 +752,6 @@ export function createTensorScene(
       selection = nextSelection;
       interaction = nextInteraction;
       animation = nextAnimation ?? null;
-      buildOperationOperands();
       const animationKey = `${nextAnimation?.operationId ?? "none"}:${nextAnimation?.step ?? -1}:${Boolean(nextAnimation?.active)}`;
       const stepChanged = animationKey !== previousAnimationKey;
       if (stepChanged) {
@@ -706,6 +763,8 @@ export function createTensorScene(
         shapeKey = key;
         rebuild();
       }
+      const operandsChanged = buildOperationOperands();
+      if (operandsChanged) reset();
       if (stepChanged) prepareStepMotion();
       refreshAppearance();
     },

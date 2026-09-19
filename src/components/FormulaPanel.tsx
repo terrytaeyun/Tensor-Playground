@@ -1,4 +1,4 @@
-import type { DisplayMode, OperationResult, TensorModel, TensorSelection } from "../types";
+import type { DisplayMode, OperationResult, TensorModel, TensorSelection, VisualAnimationState } from "../types";
 import { offsetOf } from "../model/tensor";
 import {
   componentLatex,
@@ -12,11 +12,13 @@ export function FormulaPanel({
   mode,
   selection,
   operationResult,
+  animation,
 }: {
   model: TensorModel;
   mode: DisplayMode;
   selection: TensorSelection;
   operationResult: OperationResult | null;
+  animation: VisualAnimationState;
 }) {
   const selected = selection.component;
   return (
@@ -30,7 +32,7 @@ export function FormulaPanel({
         <MathText latex={generalComponent(model)} />
       </div>
       <div className="selection-formula">
-        {operationResult && <><div className="operation-formula"><MathText latex={operationResult.formula} /></div><ResultTensor result={operationResult} mode={mode} /></>}
+        {operationResult && <><div className="operation-formula"><MathText latex={animation.result?.events[animation.step]?.latex ?? operationResult.formula} /></div>{animation.result?.events[animation.step] ? <p className="formula-step">Current step · {animation.result.events[animation.step].label}</p> : null}{mode === "numeric" && operationResult.numericFormula ? <MathText className="numeric-formula" latex={operationResult.numericFormula} /> : null}<ResultTensor result={operationResult} mode={mode} /></>}
         {selection.slice !== null && (
           <p className="selected-slice">
             Selected slice:{" "}

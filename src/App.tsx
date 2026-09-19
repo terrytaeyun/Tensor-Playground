@@ -58,24 +58,26 @@ export default function App() {
             onSliceSelect={selectSlice}
             onClear={() => setSelection(EMPTY_SELECTION)}
           />
-          <FormulaPanel model={model} mode={mode} selection={selection} operationResult={operationResult} />
+          <FormulaPanel model={model} mode={mode} selection={selection} operationResult={operationResult} animation={animation} />
+        </div>
+        <div className="right-sidebar">
+          <ControlPanel
+            model={model}
+            mode={mode}
+            selection={selection}
+            operationId={operationId}
+            onAxesChange={changeAxes}
+            onModeChange={setMode}
+            onOperationChange={(id) => { setOperationId(id); setOperationResult(null); }}
+            onSliceSelect={selectSlice}
+            onClear={() => setSelection(EMPTY_SELECTION)}
+            onValueChange={(value) => {
+              if (selection.component !== null)
+                setModel(updateValue(model, selection.component, value));
+            }}
+          />
           <OperationStudio key={`${operationId}:${model.shape.join(",")}:${model.values.join(",")}`} operationId={operationId} source={model} onResult={receiveResult} onAnimation={receiveAnimation} />
         </div>
-        <ControlPanel
-          model={model}
-          mode={mode}
-          selection={selection}
-          operationId={operationId}
-          onAxesChange={changeAxes}
-          onModeChange={setMode}
-          onOperationChange={(id) => { setOperationId(id); setOperationResult(null); }}
-          onSliceSelect={selectSlice}
-          onClear={() => setSelection(EMPTY_SELECTION)}
-          onValueChange={(value) => {
-            if (selection.component !== null)
-              setModel(updateValue(model, selection.component, value));
-          }}
-        />
       </main>
     </div>
   );
